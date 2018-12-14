@@ -2,6 +2,8 @@ import os
 
 import requests
 import telebot
+
+from telebot import types
 from flask import Flask, request
 
 TOKEN = os.environ.get('TOKEN')
@@ -13,14 +15,35 @@ EXTERNAL_IP = requests.request("GET", 'https://api.ipify.org').text
 PORT = int(os.environ.get('WEBHOOK_PORT', 8443))
 
 
+@BOT.callback_query_handler(func=lambda call: True)
+def test_callback(call):
+    markup = types.ReplyKeyboardRemove(selective=False)
+    if call.data == 'calendar':
+        BOT.reply_to(call.message, 'calendar', reply_markup=markup)
+    elif call.data == 'absence':
+        BOT.reply_to(call.message, 'absence')
+    elif call.data == 'help':
+        BOT.reply_to(call.message, 'help')
+
+
 @BOT.message_handler(commands=['bot', 'бот'])
 def init(message):
-    BOT.reply_to(message, 'Bot, ' + message.from_user.first_name)
+    BOT.reply_to(message, 'bot')
 
 
 @BOT.message_handler(commands=['help', 'помощь'])
 def helper(message):
-    BOT.reply_to(message, 'Help, ' + message.from_user.first_name)
+    # markup = types.InlineKeyboardMarkup(row_width=3)
+    markup = types.ReplyKeyboardMarkup(
+        row_width=3, resize_keyboard=True, one_time_keyboard=True,
+        selective=False
+    )
+    markup.add(
+        types.InlineKeyboardButton('Календарь', callback_data='calendar'),
+        types.InlineKeyboardButton('Неявка', callback_data='absence'),
+        types.InlineKeyboardButton('Помощь', callback_data='help'),
+    )
+    BOT.send_message(message.chat.id, 'help', reply_markup=markup)
 
 
 @BOT.message_handler(func=lambda message: True, content_types=['text'])
