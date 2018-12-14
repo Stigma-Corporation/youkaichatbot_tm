@@ -1,4 +1,5 @@
 import os
+
 import requests
 import telebot
 from flask import Flask, request
@@ -8,10 +9,8 @@ BOT = telebot.TeleBot(TOKEN)
 SERVER = Flask(__name__)
 APP_NAME = os.environ.get('APP_NAME')
 IS_HEROKU = os.environ.get('HEROKU', False)
-print(f'IS_HEROKU: {IS_HEROKU}')
 EXTERNAL_IP = requests.request("GET", 'https://api.ipify.org').text
 PORT = int(os.environ.get('WEBHOOK_PORT', 8443))
-print(f'PORT: {PORT}')
 
 
 @BOT.message_handler(commands=['bot', 'бот'])
@@ -41,16 +40,24 @@ def getMessage():
 def webhook():
     BOT.remove_webhook()
     if IS_HEROKU:
-        print("--- HEROKU FLOW!!! ---")
         BOT.set_webhook(url=f'https://{APP_NAME}.herokuapp.com/{TOKEN}')
     else:
-        BOT.set_webhook(
-            url=f'{EXTERNAL_IP}:{PORT}',
-            certificate=open(f'{os.getcwd()}/public.pem', 'rb')
-        )
+        ngrok_url = ''
+        tunnels = requests.request(
+            'GET', 'http://localhost:4040/api/tunnels'
+        ).json().get('tunnels', None)
+        if tunnels:
+            for tunnel in tunnels:
+                if tunnel.get('proto', '') == 'https':
+                    ngrok_url = tunnel.get('public_url', '')
+            if ngrok_url:
+                BOT.set_webhook(url=f'{ngrok_url}/{TOKEN}')
+        # BOT.set_webhook(
+        #     url=f'{EXTERNAL_IP}:{PORT}',
+        #     certificate=open(f'{os.getcwd()}/public.pem', 'rb')
+        # )
     return "!", 200
 
 
 if __name__ == "__main__":
     SERVER.run(host="0.0.0.0", port=PORT)
-    BOT.polling()
