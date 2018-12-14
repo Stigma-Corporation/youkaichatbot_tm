@@ -10,7 +10,7 @@ APP_NAME = os.environ.get('APP_NAME')
 IS_HEROKU = os.environ.get('HEROKU', False)
 print(f'IS_HEROKU: {IS_HEROKU}')
 EXTERNAL_IP = requests.request("GET", 'https://api.ipify.org').text
-PORT = int(os.environ.get('PORT', 8443))
+PORT = int(os.environ.get('WEBHOOK_PORT', 8443))
 print(f'PORT: {PORT}')
 
 
