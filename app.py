@@ -8,9 +8,10 @@ BOT = telebot.TeleBot(TOKEN)
 SERVER = Flask(__name__)
 APP_NAME = os.environ.get('APP_NAME')
 IS_HEROKU = os.environ.get('HEROKU', False)
-print(IS_HEROKU)
+print(f'IS_HEROKU: {IS_HEROKU}')
 EXTERNAL_IP = requests.request("GET", 'https://api.ipify.org').text
 PORT = int(os.environ.get('PORT', 8443))
+print(f'PORT: {PORT}')
 
 
 @BOT.message_handler(commands=['bot', 'бот'])
@@ -40,6 +41,7 @@ def getMessage():
 def webhook():
     BOT.remove_webhook()
     if IS_HEROKU:
+        print("--- HEROKU FLOW!!! ---")
         BOT.set_webhook(url=f'https://{APP_NAME}.herokuapp.com/{TOKEN}')
     else:
         BOT.set_webhook(
