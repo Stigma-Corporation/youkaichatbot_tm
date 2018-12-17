@@ -35,7 +35,9 @@ ABSENCE_TEXT = \
     '<b>P.S.</b><i>Формат даты: число.месяц.год 31.12.2018</i>\n' \
     '<i>Если отсутствие будет один день, даты должны быть одинаковыми</i>\n' \
     '<i>Ник нужно записывать в скобках: (никнейм) или (ник нейм)</i>\n' \
-    '<i>Причину нужно записывать в двойных ковычках: "Очень уважительная причина"</i>\n'
+    '<i>Причину нужно записывать в двойных ковычках: "Очень уважительная причина"</i>\n' \
+    '<i>Ник и причину нужно записывать без пробелов!!!</i>\n' \
+    'ОШИБКИ: <b>( н</b>икней<b>м )</b> и <b>" у</b>важительная причин<b>а "</b>'
 DAYS = (
     '/сегодня', '/завтра', '/понедельник', '/вторник', '/среда', '/четверг',
     '/пятница', '/суббота', '/воскресенье',
@@ -64,13 +66,13 @@ CALENDAR_CHOICES = ('/календарь', '/calendar')
 ABSENCE_CHOICES = ('/неявка', '/absence')
 DB_LOGIN = os.environ.get("DB_LOGIN", None)
 DB_PASS = os.environ.get("DB_PASS", None)
-client = pymongo.MongoClient(
+MONGO_CLIENT = pymongo.MongoClient(
     "mongodb+srv://{}:{}@kost-cwn1x.mongodb.net/test?retryWrites=true".format(
         DB_LOGIN, DB_PASS), connect=False
 )
-__client = client
-__db = client["Youkai"]
-__col = __db["calendar"]
+DATABASE = MONGO_CLIENT["Youkai"]
+CALENDAR_COLLECTION = DATABASE["calendar"]
+ABSENCE_COLLECTION = DATABASE["absence"]
 
 
 def get_day_number(timestamp, tomorrow=False):
@@ -83,22 +85,23 @@ def get_day_number(timestamp, tomorrow=False):
 
 
 def get_day_data(day_code):
-    return __col.find_one(
+    return CALENDAR_COLLECTION.find_one(
         {'day': str(day_code)}, {'_id': 0}
     )
 
 
 def get_absence_by_date(date):
-    absence_cursor = __db["absence"].find({}, {"_id": 0})
+    absence_cursor = ABSENCE_COLLECTION.find({}, {"_id": 0})
     result = []
+    this_day = datetime.datetime(date.year, date.month, date.day)
     for absence in absence_cursor:
-        if absence['datetime_from'] <= date <= absence['datetime_to']:
+        if absence['datetime_from'] <= this_day <= absence['datetime_to']:
             result.append(absence)
     return result
 
 
 def create_absence(data):
-    new_absence = __db["absence"].insert_one(data)
+    new_absence = ABSENCE_COLLECTION.insert_one(data)
     if new_absence.inserted_id:
         return True
     return False
@@ -109,46 +112,64 @@ def normalize_day_data(day_data):
         NORMALIZED_DAYS[day_data.get('day')]
     )
     for event in day_data.get('events', []):
-        data += 'Название: {}\nВремя: <b>{}</b>\nОписание: {}\n\n'.format(
-            event.get('brief'), NORMALIZED_HOURS[event.get('start')],
-            event.get('description')
-        )
+        data += f'Название: {event.get("brief")}\n' \
+            f'Время: <b>{NORMALIZED_HOURS[event.get("start")]}</b>\n' \
+            f'Описание: {event.get("description")}\n\n'
     return data
+
+
+def normalize_absence_data(absence):
+    result = 'Данные по неявкам: \n'
+    for item in absence:
+        result += f'<b>{item.get("nickname", "")}</b> будет отсутствовать \n' \
+            f'с <i>{item.get("datetime_from", "").date()}</i> ' \
+            f'по <i>{item.get("datetime_to", "").date()}</i>.\n' \
+            f'Причина: "{item.get("reason", "")}"\n'
+    return result
+
+
+@BOT.callback_query_handler(func=lambda call: True)
+def callbacks(call):
+    if call.data == '/календарь':
+        markup = types.ReplyKeyboardMarkup(
+            row_width=3, one_time_keyboard=True, selective=False,
+            resize_keyboard=True
+        )
+        for day_name in DAYS:
+            markup.add(
+                types.KeyboardButton(day_name)
+            )
+        BOT.reply_to(
+            call.message, CHOOSE_DAY, reply_markup=markup, parse_mode='HTML'
+        )
+    elif call.data == '/неявка':
+        BOT.reply_to(
+            call.message, ABSENCE_TEXT, parse_mode='HTML'
+        )
 
 
 @BOT.message_handler(
     func=lambda message: True,
     content_types=["text"],
-    commands=['bot', 'help', 'бот', 'помощь']
+    commands=[
+        'bot', 'help', 'бот', 'помощь', 'bot@YoukaiClanBot',
+        'help@YoukaiClanBot'
+    ]
 )
 def bot_init(message):
-    if message.text in ['/bot', '/бот']:
-        markup = types.ReplyKeyboardMarkup(
-            row_width=2, selective=False, one_time_keyboard=True
+    if message.text in ['/bot', '/бот', '/bot@YoukaiClanBot']:
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton('Календарь', callback_data='/календарь')
         )
-        markup.add(types.KeyboardButton('/календарь'))
-        markup.add(types.KeyboardButton('/неявка'))
+        markup.add(
+            types.InlineKeyboardButton('Неявка', callback_data='/неявка')
+        )
         BOT.reply_to(
             message, SELECT_MAIN, reply_markup=markup, parse_mode='HTML'
         )
-    elif message.text in ['/help', '/помощь']:
+    elif message.text in ['/help', '/помощь', '/help@YoukaiClanBot']:
         BOT.reply_to(message, parse_mode='HTML', text=HELP_MESSAGE)
-
-
-@BOT.message_handler(
-    func=lambda message: True,
-    content_types=['text'],
-    commands=[day[1:] for day in CALENDAR_CHOICES]
-)
-def calendar_keyboard(message):
-    markup = types.ReplyKeyboardMarkup(
-        row_width=3, selective=False, one_time_keyboard=True
-    )
-    for day_name in DAYS:
-        markup.add(types.KeyboardButton(day_name))
-    BOT.reply_to(
-        message, CHOOSE_DAY, reply_markup=markup, parse_mode='HTML'
-    )
 
 
 @BOT.message_handler(
@@ -156,54 +177,53 @@ def calendar_keyboard(message):
     content_types=['text'],
     commands=[day[1:] for day in ABSENCE_CHOICES]
 )
-def absence(message):
+def absence_flow(message):
     markup = types.ReplyKeyboardRemove(selective=False)
     absence_list = message.text.split(' ')[1:]
     if absence_list:
-        date_list = absence_list[0:2]
-        nickname = []
-        reason_slice = [None, None]
-        for absence_index, item in enumerate(absence_list):
-            if item.startswith('(') and item.endswith(')'):
-                nickname = item[1:-1]
-            elif item.startswith('(') or item.endswith(')'):
-                nickname.append(item)
-            elif item.startswith('"'):
-                reason_slice[0] = absence_index
-            elif item.endswith('"'):
-                reason_slice[1] = absence_index + 1
-        if isinstance(nickname, list):
-            nickname = ' '.join(nickname)[1:-1]
-        reason = absence_list[reason_slice[0]:reason_slice[1]]
-        if isinstance(reason, list):
-            reason = ' '.join(reason)[1:-1]
-        else:
-            reason = reason[1:-1]
-        data = dict()
-        data['datetime_from'] = datetime.datetime.strptime(
-            date_list[0], "%d.%m.%Y"
-        )
-        data['datetime_to'] = datetime.datetime.strptime(
-            date_list[1], "%d.%m.%Y"
-        )
-        data['nickname'] = nickname
-        data['reason'] = reason
-        result = create_absence(data)
-        if result:
-            BOT.reply_to(
-                message, 'Неявка создана!', reply_markup=markup,
-                parse_mode='HTML'
+        try:
+            date_list = absence_list[0:2]
+            nickname = []
+            reason_slice = [None, None]
+            for absence_index, item in enumerate(absence_list):
+                if item.startswith('(') and item.endswith(')'):
+                    nickname = item[1:-1]
+                elif item.startswith('(') or item.endswith(')'):
+                    nickname.append(item)
+                elif item.startswith('"'):
+                    reason_slice[0] = absence_index
+                elif item.endswith('"'):
+                    reason_slice[1] = absence_index + 1
+            if isinstance(nickname, list):
+                nickname = ' '.join(nickname)[1:-1]
+            reason = absence_list[reason_slice[0]:reason_slice[1]]
+            if isinstance(reason, list):
+                reason = ' '.join(reason)[1:-1]
+            else:
+                reason = reason[1:-1]
+            data = dict()
+            data['datetime_from'] = datetime.datetime.strptime(
+                date_list[0], "%d.%m.%Y"
             )
-        else:
-            BOT.reply_to(
-                message, 'Что-то пошло не так, неявка не создана!',
-                reply_markup=markup,
-                parse_mode='HTML'
+            data['datetime_to'] = datetime.datetime.strptime(
+                date_list[1], "%d.%m.%Y"
             )
-    else:
-        BOT.reply_to(
-            message, ABSENCE_TEXT, reply_markup=markup, parse_mode='HTML'
-        )
+            data['nickname'] = nickname
+            data['reason'] = reason
+            result = create_absence(data)
+            if result:
+                BOT.reply_to(
+                    message, 'Неявка создана!', reply_markup=markup,
+                    parse_mode='HTML'
+                )
+            else:
+                BOT.reply_to(
+                    message, 'Что-то пошло не так, неявка не создана!',
+                    reply_markup=markup,
+                    parse_mode='HTML'
+                )
+        except Exception as error:
+            BOT.reply_to(message, ABSENCE_TEXT + str(error), parse_mode='HTML')
 
 
 @BOT.message_handler(
@@ -211,10 +231,11 @@ def absence(message):
     content_types=['text'],
     commands=[day[1:] for day in DAYS_CHOICES]
 )
-def calendar_flow(message):
+def get_calendar_day_data(message):
     if message.text in DAYS_CHOICES.keys():
+        markup = types.ReplyKeyboardRemove(selective=False)
         day_code = DAYS_CHOICES.get(message.text)
-        absence = ''
+        absence = []
         if day_code == 8:
             day_code = get_day_number(message.date)
             absence = get_absence_by_date(
@@ -228,13 +249,12 @@ def calendar_flow(message):
         data = get_day_data(day_code)
         response = normalize_day_data(data)
         if absence:
-            response += str(absence)
-        # добавить неявку тут
-        BOT.reply_to(message, response, parse_mode='HTML')
+            response += normalize_absence_data(absence)
+        BOT.reply_to(message, response, reply_markup=markup, parse_mode='HTML')
 
 
 @SERVER.route(f'/{TOKEN}', methods=['POST'])
-def getMessage():
+def get_message():
     BOT.process_new_updates(
         [telebot.types.Update.de_json(request.stream.read().decode("utf-8"))]
     )
