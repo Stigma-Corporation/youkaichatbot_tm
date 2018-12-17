@@ -1,3 +1,4 @@
+"""YoukaiClanBot for telegram chat"""
 import datetime
 import os
 
@@ -18,7 +19,8 @@ PORT = int(os.environ.get('WEBHOOK_PORT', 8443))
 
 HELP_MESSAGE = \
     '<b>YoukaiClanBot - Помощь</b>\n' \
-    '<b>Сайт:</b> <a href="https://youkai-clan.github.io/site/">Youkai site</a>\n' \
+    '<b>Сайт:</b> <a href="https://youkai-clan.github.io/site/">Youkai ' \
+    'site</a>\n' \
     '<b>YoukaiClanBot - Команды</b>\n' \
     'Для начала работы введите:\n<code>/bot</code> или <code>/бот</code>'
 SELECT_MAIN = \
@@ -35,7 +37,8 @@ ABSENCE_TEXT = \
     '<b>P.S.</b><i>Формат даты: число.месяц.год 31.12.2018</i>\n' \
     '<i>Если отсутствие будет один день, даты должны быть одинаковыми</i>\n' \
     '<i>Ник нужно записывать в скобках: (никнейм) или (ник нейм)</i>\n' \
-    '<i>Причину нужно записывать в двойных ковычках: "Очень уважительная причина"</i>\n' \
+    '<i>Причину нужно записывать в двойных ковычках: "Очень уважительная ' \
+    'причина"</i>\n' \
     '<i>Ник и причину нужно записывать без пробелов!!!</i>\n' \
     'ОШИБКИ: <b>( н</b>икней<b>м )</b> и <b>" у</b>важительная причин<b>а "</b>'
 DAYS = (
@@ -75,7 +78,8 @@ CALENDAR_COLLECTION = DATABASE["calendar"]
 ABSENCE_COLLECTION = DATABASE["absence"]
 
 
-def get_day_number(timestamp, tomorrow=False):
+def get_day_number(timestamp, tomorrow=False) -> int:
+    """:return: int day number (Monday = 1) etc."""
     current_day = datetime.datetime.utcfromtimestamp(timestamp).weekday() + 1
     if tomorrow:
         current_day += 1
@@ -85,29 +89,49 @@ def get_day_number(timestamp, tomorrow=False):
 
 
 def get_day_data(day_code):
+    """:return: get one day from DB by day code (Monday = "1") etc."""
     return CALENDAR_COLLECTION.find_one(
         {'day': str(day_code)}, {'_id': 0}
     )
 
 
-def get_absence_by_date(date):
+def get_absence_by_date(date) -> list:
+    """:return: list of absence object filtered by date parameter"""
     absence_cursor = ABSENCE_COLLECTION.find({}, {"_id": 0})
-    result = []
-    this_day = datetime.datetime(date.year, date.month, date.day)
-    for absence in absence_cursor:
-        if absence['datetime_from'] <= this_day <= absence['datetime_to']:
-            result.append(absence)
+    # result = []
+    day = datetime.datetime(date.year, date.month, date.day)
+    # for absence in absence_cursor:
+    #     if absence['datetime_from'] <= day <= absence['datetime_to']:
+    #         result.append(absence)
+    result = [
+        absence for absence in absence_cursor
+        if absence['datetime_from'] <= day <= absence['datetime_to']
+    ]
     return result
 
 
-def create_absence(data):
+def auto_clear_absence(date):
+    """Clear absence that was yesterday (by datetime_from and datetime_to)"""
+    day = datetime.datetime(date.year, date.month, date.day)
+    ABSENCE_COLLECTION.delete_many(
+        {
+            "$and": [
+                {"datetime_from": {"$lt": day}}, {"datetime_to": {"$lt": day}}
+            ]
+        }
+    )
+
+
+def create_absence(data) -> bool:
+    """crete a new absence document in DB"""
     new_absence = ABSENCE_COLLECTION.insert_one(data)
     if new_absence.inserted_id:
         return True
     return False
 
 
-def normalize_day_data(day_data):
+def normalize_day_data(day_data) -> str:
+    """:return: prepared data for reply message"""
     data = 'День - <b>{}</b>\n<b>События</b>:\n'.format(
         NORMALIZED_DAYS[day_data.get('day')]
     )
@@ -118,18 +142,20 @@ def normalize_day_data(day_data):
     return data
 
 
-def normalize_absence_data(absence):
+def normalize_absence_data(absence: list) -> str:
+    """:return: prepared data for reply message"""
     result = 'Данные по неявкам: \n'
     for item in absence:
         result += f'<b>{item.get("nickname", "")}</b> будет отсутствовать \n' \
-            f'с <i>{item.get("datetime_from", "").date()}</i> ' \
-            f'по <i>{item.get("datetime_to", "").date()}</i>.\n' \
-            f'Причина: "{item.get("reason", "")}"\n'
+            f'с <i>{item.get("datetime_from", "").date().strftime("%d.%m.%Y")}</i> ' \
+            f'по <i>{item.get("datetime_to", "").date().strftime("%d.%m.%Y")}</i>.\n' \
+            f'Причина: "{item.get("reason", "")}"\n\n'
     return result
 
 
 @BOT.callback_query_handler(func=lambda call: True)
 def callbacks(call):
+    """callback handler for main menu commands"""
     if call.data == '/календарь':
         markup = types.ReplyKeyboardMarkup(
             row_width=3, one_time_keyboard=True, selective=False,
@@ -157,6 +183,7 @@ def callbacks(call):
     ]
 )
 def bot_init(message):
+    """main handler for bot commands"""
     if message.text in ['/bot', '/бот', '/bot@YoukaiClanBot']:
         markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(
@@ -178,6 +205,7 @@ def bot_init(message):
     commands=[day[1:] for day in ABSENCE_CHOICES]
 )
 def absence_flow(message):
+    """flow for creation of absence"""
     markup = types.ReplyKeyboardRemove(selective=False)
     absence_list = message.text.split(' ')[1:]
     if absence_list:
@@ -232,19 +260,27 @@ def absence_flow(message):
     commands=[day[1:] for day in DAYS_CHOICES]
 )
 def get_calendar_day_data(message):
+    """:returns: calendar and absence data by chosen day"""
     if message.text in DAYS_CHOICES.keys():
         markup = types.ReplyKeyboardRemove(selective=False)
         day_code = DAYS_CHOICES.get(message.text)
         absence = []
         if day_code == 8:
             day_code = get_day_number(message.date)
+            auto_clear_absence(
+                datetime.datetime.utcfromtimestamp(message.date)
+            )
             absence = get_absence_by_date(
                 datetime.datetime.utcfromtimestamp(message.date)
             )
         elif day_code == 9:
             day_code = get_day_number(message.date, tomorrow=True)
+            auto_clear_absence(
+                datetime.datetime.utcfromtimestamp(message.date)
+            )
             absence = get_absence_by_date(
-                datetime.datetime.utcfromtimestamp(message.date) + datetime.timedelta(days=1)
+                datetime.datetime.utcfromtimestamp(message.date)
+                + datetime.timedelta(days=1)
             )
         data = get_day_data(day_code)
         response = normalize_day_data(data)
@@ -255,6 +291,7 @@ def get_calendar_day_data(message):
 
 @SERVER.route(f'/{TOKEN}', methods=['POST'])
 def get_message():
+    """endpoint that handle updates from telegram webhook"""
     BOT.process_new_updates(
         [telebot.types.Update.de_json(request.stream.read().decode("utf-8"))]
     )
@@ -263,6 +300,7 @@ def get_message():
 
 @SERVER.route("/")
 def webhook():
+    """endpoint that reinstall webhook (for heroku app or local machine addr)"""
     BOT.remove_webhook()
     if IS_HEROKU:
         BOT.set_webhook(url=f'https://{APP_NAME}.herokuapp.com/{TOKEN}')
